@@ -6,6 +6,7 @@ import { getDb } from '../db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { toUserDto } from '../lib/sanitize.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
+import { verifyGoogleIdToken } from '../lib/firebaseAdmin.js';
 
 const router = express.Router();
 const TOKEN_EXPIRY = '7d';
@@ -53,8 +54,54 @@ router.post('/login', asyncHandler(async (req, res) => {
   const user = await db.collection('users').findOne({ email: email.toLowerCase() });
   if (!user) return res.status(401).json({ error: 'invalid_credentials' });
 
+  // Accounts created via Google sign-in have no passwordHash — bcrypt.compare would throw on
+  // undefined rather than just failing, so this needs its own explicit rejection.
+  if (!user.passwordHash) return res.status(401).json({ error: 'invalid_credentials' });
+
   const ok = await bcrypt.compare(password, user.passwordHash);
   if (!ok) return res.status(401).json({ error: 'invalid_credentials' });
+
+  res.json({ token: issueToken(user), user: toUserDto(user) });
+}));
+
+router.post('/google', asyncHandler(async (req, res) => {
+  const { idToken } = req.body ?? {};
+  if (!idToken) return res.status(400).json({ error: 'invalid_input', detail: 'idToken is required.' });
+
+  let decoded;
+  try {
+    decoded = await verifyGoogleIdToken(idToken);
+  } catch {
+    return res.status(401).json({ error: 'invalid_token', detail: 'Could not verify Google sign-in. Please try again.' });
+  }
+
+  if (!decoded.email) {
+    return res.status(400).json({ error: 'invalid_input', detail: 'Google account has no email address.' });
+  }
+
+  const db = await getDb();
+  const users = db.collection('users');
+  const email = decoded.email.toLowerCase();
+
+  let user = await users.findOne({ email });
+  if (!user) {
+    const now = new Date();
+    const doc = {
+      email,
+      passwordHash: null,
+      displayName: decoded.name || email.split('@')[0],
+      dateOfBirth: null,
+      role: 'candidate',
+      faceEnrolled: false,
+      enrollmentStatus: 'pending',
+      authProvider: 'google',
+      createdAt: now,
+      updatedAt: now,
+    };
+    const { insertedId } = await users.insertOne(doc);
+    doc._id = insertedId;
+    user = doc;
+  }
 
   res.json({ token: issueToken(user), user: toUserDto(user) });
 }));

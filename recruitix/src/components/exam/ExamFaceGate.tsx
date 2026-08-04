@@ -120,29 +120,29 @@ const ExamFaceGate = ({ sessionId, onUnlocked, onManualReview, onCancel }: ExamF
   };
 
   return (
-    <div className="min-h-screen bg-black flex items-center justify-center p-4">
-      <Card className="w-full max-w-2xl bg-slate-900 border-slate-700">
+    <div className="min-h-screen bg-white flex items-center justify-center p-4">
+      <Card className="w-full max-w-2xl border-gray-200 shadow-sm">
         <CardHeader>
-          <CardTitle className="text-2xl text-white flex items-center gap-2">
-            <Eye className="w-6 h-6 text-blue-400" /> Identity Verification
+          <CardTitle className="text-2xl text-gray-900 flex items-center gap-2">
+            <Eye className="w-6 h-6 text-blue-600" /> Identity Verification
           </CardTitle>
-          <CardDescription className="text-slate-300">
+          <CardDescription className="text-gray-500">
             Confirm it's really you before the exam unlocks.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
-          <video ref={videoRef} autoPlay muted playsInline className="w-full h-64 bg-slate-700 rounded-lg object-cover" />
+          <video ref={videoRef} autoPlay muted playsInline className="w-full h-64 bg-gray-100 rounded-lg object-cover" />
 
           {message && (
-            <div className="bg-blue-900/20 border border-blue-500/50 rounded-lg p-3">
-              <p className="text-blue-300 text-sm">{message}</p>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-blue-700 text-sm">{message}</p>
             </div>
           )}
 
           {status === 'failed' && attemptsRemaining !== null && (
-            <div className="bg-amber-900/20 border border-amber-500/50 rounded-lg p-3 flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
-              <p className="text-amber-300 text-sm">{attemptsRemaining} attempt(s) remaining.</p>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+              <p className="text-amber-800 text-sm">{attemptsRemaining} attempt(s) remaining.</p>
             </div>
           )}
 
@@ -162,7 +162,7 @@ const ExamFaceGate = ({ sessionId, onUnlocked, onManualReview, onCancel }: ExamF
                     : 'Start Verification'}
           </Button>
 
-          <Button onClick={onCancel} variant="outline" className="w-full bg-transparent border-slate-600 text-slate-300 hover:bg-slate-800">
+          <Button onClick={onCancel} variant="outline" className="w-full border-gray-300 text-gray-600 hover:bg-gray-50">
             Cancel
           </Button>
         </CardContent>

@@ -2,7 +2,11 @@
 // for the superseded Postgres plan). All four companies point at the same question set for
 // now — replace per-company content later directly in MongoDB, no schema change needed.
 import 'dotenv/config';
+import bcrypt from 'bcryptjs';
 import { getDb } from './db.js';
+
+const RECRUITER_EMAIL = 'admin@recruitix.local';
+const RECRUITER_PASSWORD = 'admin@1234';
 
 const COMPANIES = [
   { name: 'TCS', slug: 'tcs' },
@@ -78,6 +82,24 @@ async function seed() {
 
   for (const company of COMPANIES) {
     await db.collection('companies').updateOne({ slug: company.slug }, { $setOnInsert: company }, { upsert: true });
+  }
+
+  const existingRecruiter = await db.collection('users').findOne({ email: RECRUITER_EMAIL });
+  if (!existingRecruiter) {
+    const passwordHash = await bcrypt.hash(RECRUITER_PASSWORD, 10);
+    await db.collection('users').insertOne({
+      email: RECRUITER_EMAIL,
+      passwordHash,
+      displayName: 'Admin',
+      dateOfBirth: null,
+      role: 'recruiter',
+      faceEnrolled: true,
+      enrollmentStatus: 'completed',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    // eslint-disable-next-line no-console
+    console.log(`Seeded recruiter account: ${RECRUITER_EMAIL} / ${RECRUITER_PASSWORD}`);
   }
 
   const companies = await db.collection('companies').find({}).toArray();

@@ -5,6 +5,7 @@ import authRoutes from './routes/auth.js';
 import faceRoutes from './routes/face.js';
 import companyRoutes from './routes/companies.js';
 import examRoutes from './routes/exam.js';
+import recruiterRoutes from './routes/recruiter.js';
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/face', faceRoutes);
 app.use('/api', companyRoutes);
 app.use('/api/exam', examRoutes);
+app.use('/api/recruiter', recruiterRoutes);
 
 app.use((err, _req, res, _next) => {
   // eslint-disable-next-line no-console

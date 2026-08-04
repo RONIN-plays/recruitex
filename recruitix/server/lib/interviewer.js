@@ -46,18 +46,40 @@ function parseJsonResponse(text) {
   return JSON.parse(cleaned);
 }
 
-export async function generateInterviewerTurn(transcriptMessages) {
-  const completion = await getClient().chat.completions.create({
-    model: MODEL,
-    temperature: 0.7,
-    response_format: { type: 'json_object' },
-    messages: [{ role: 'system', content: INTERVIEWER_SYSTEM }, ...toApiMessages(transcriptMessages)],
-  });
+// llama-3.3-70b's constrained JSON mode occasionally still emits a grammatically invalid object
+// (Groq's own server-side validator rejects it with a 400 before we ever see the completion) —
+// rare, but a live interview mid-conversation or a just-finished exam is a bad place to just
+// throw, so every generation gets one retry before falling back to a safe default below.
+async function withOneRetry(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Groq generation failed, retrying once:', err?.message || err);
+    return fn();
+  }
+}
 
-  const raw = completion.choices[0]?.message?.content ?? '{}';
-  const parsed = parseJsonResponse(raw);
+export async function generateInterviewerTurn(transcriptMessages) {
+  let parsed;
+  try {
+    parsed = await withOneRetry(async () => {
+      const completion = await getClient().chat.completions.create({
+        model: MODEL,
+        temperature: 0.7,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'system', content: INTERVIEWER_SYSTEM }, ...toApiMessages(transcriptMessages)],
+      });
+      return parseJsonResponse(completion.choices[0]?.message?.content ?? '{}');
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Interviewer turn generation failed twice, using fallback reply:', err?.message || err);
+    parsed = {};
+  }
+
   return {
-    reply: typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply : 'Could you tell me a bit more about that?',
+    reply: typeof parsed.reply === 'string' && parsed.reply.trim() ? parsed.reply : "Sorry, could you say that again?",
     interviewComplete: parsed.interviewComplete === true,
   };
 }
@@ -67,21 +89,34 @@ export async function generateInterviewEvaluation(transcriptMessages) {
     .map((m) => `${m.role === 'assistant' ? 'Interviewer' : 'Candidate'}: ${m.text}`)
     .join('\n\n');
 
-  const completion = await getClient().chat.completions.create({
-    model: MODEL,
-    temperature: 0.3,
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: EVALUATOR_SYSTEM },
-      { role: 'user', content: `Here is the full interview transcript:\n\n${transcriptText}\n\nEvaluate the candidate's performance.` },
-    ],
-  });
+  let parsed;
+  try {
+    parsed = await withOneRetry(async () => {
+      const completion = await getClient().chat.completions.create({
+        model: MODEL,
+        temperature: 0.3,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: EVALUATOR_SYSTEM },
+          { role: 'user', content: `Here is the full interview transcript:\n\n${transcriptText}\n\nEvaluate the candidate's performance.` },
+        ],
+      });
+      return parseJsonResponse(completion.choices[0]?.message?.content ?? '{}');
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Interview evaluation generation failed twice, using fallback evaluation:', err?.message || err);
+    parsed = {};
+  }
 
-  const raw = completion.choices[0]?.message?.content ?? '{}';
-  const parsed = parseJsonResponse(raw);
+  const fallback = Object.keys(parsed).length === 0;
   return {
-    score: typeof parsed.score === 'number' ? Math.max(0, Math.min(100, Math.round(parsed.score))) : 0,
-    summary: typeof parsed.summary === 'string' ? parsed.summary : 'No summary available.',
+    score: typeof parsed.score === 'number' ? Math.max(0, Math.min(100, Math.round(parsed.score))) : 50,
+    summary: typeof parsed.summary === 'string' && parsed.summary.trim()
+      ? parsed.summary
+      : fallback
+        ? 'Automated scoring failed for this interview. A recruiter should review the transcript directly.'
+        : 'No summary available.',
     strengths: Array.isArray(parsed.strengths) ? parsed.strengths.filter((s) => typeof s === 'string') : [],
     areasToImprove: Array.isArray(parsed.areasToImprove) ? parsed.areasToImprove.filter((s) => typeof s === 'string') : [],
   };

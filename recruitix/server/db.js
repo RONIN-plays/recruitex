@@ -1,4 +1,10 @@
+import dns from 'node:dns';
 import { MongoClient, GridFSBucket } from 'mongodb';
+
+// Some local/router DNS resolvers refuse SRV queries (needed for the mongodb+srv:// scheme)
+// even though they resolve plain A/AAAA records fine, surfacing as "querySrv ECONNREFUSED".
+// Falling back to public resolvers keeps local dev working without changing the connection string.
+dns.setServers([...dns.getServers(), '8.8.8.8', '1.1.1.1']);
 
 const DB_NAME = 'recruitix';
 

@@ -10,7 +10,7 @@ import type { Company } from './CompanySelect';
 
 interface ExamTypeSelectProps {
   company: Company;
-  onSessionReady: (sessionId: string) => void;
+  onSessionReady: (sessionId: string, round: RoundName) => void;
   onBack: () => void;
 }
 
@@ -35,7 +35,7 @@ const ExamTypeSelect = ({ company, onSessionReady, onBack }: ExamTypeSelectProps
     setError('');
     try {
       const { sessionId } = await apiPost<{ sessionId: string }>('/api/exam/sessions', { companyId: company.id, round });
-      onSessionReady(sessionId);
+      onSessionReady(sessionId, round);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start this exam. Please try again.');
       setStarting(null);
