@@ -533,6 +533,7 @@ const ExamRunner = ({ sessionId, screenStream, micStream, onExamComplete }: Exam
           title={`${durations.name} — ${EXAM_TYPE_LABELS[session.currentRound]}`}
           durationMin={durationMin}
           cameraVideoRef={videoRef}
+          micStream={micStream}
           onSubmit={(result) => handleRoundSubmit(session.currentRound as RoundName, result)}
         />
       ) : (

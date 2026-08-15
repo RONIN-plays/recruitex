@@ -7,6 +7,7 @@ import { asyncHandler } from '../lib/asyncHandler.js';
 import { generateInterviewerTurn, generateInterviewEvaluation } from '../lib/interviewer.js';
 import { generateTechnicalQuestions, gradeCodingAnswer } from '../lib/technicalRound.js';
 import { generateHrQuestions, gradeHrAnswer } from '../lib/hrRound.js';
+import { transcribeAudio } from '../lib/transcription.js';
 import { severityForType } from '../lib/violations.js';
 
 const router = express.Router();
@@ -365,8 +366,25 @@ router.post('/sessions/:id/hr/submit', requireAuth, loadOwnedSession, asyncHandl
 }));
 
 // AI-driven Live Interview (round === 'personal'): a Claude-conducted conversational interview,
-// one question at a time, transcribed by the candidate's browser and spoken back via TTS. The
-// full exchange is persisted in interviewTranscripts so /finish can grade the whole conversation.
+// one question at a time, spoken back via TTS. The candidate's spoken answers are recorded in the
+// browser and transcribed here via Whisper (rather than the browser's own Web Speech API, which
+// proved unreliable across browsers/networks — silent failures with no error event at all in some
+// setups). The full exchange is persisted in interviewTranscripts so /finish can grade it.
+router.post('/sessions/:id/interview/transcribe', requireAuth, loadOwnedSession, asyncHandler(async (req, res) => {
+  if (req.session.round !== 'personal') return res.status(400).json({ error: 'invalid_input', detail: 'not an interview session' });
+
+  const { audioBase64, mimeType } = req.body ?? {};
+  if (typeof audioBase64 !== 'string' || !audioBase64) {
+    return res.status(400).json({ error: 'invalid_input', detail: 'audioBase64 is required.' });
+  }
+
+  const buffer = Buffer.from(audioBase64, 'base64');
+  if (buffer.length === 0) return res.status(400).json({ error: 'invalid_input', detail: 'Recorded clip is empty.' });
+
+  const text = await transcribeAudio(buffer, typeof mimeType === 'string' && mimeType ? mimeType : 'audio/webm');
+  res.json({ text });
+}));
+
 router.post('/sessions/:id/interview/start', requireAuth, loadOwnedSession, asyncHandler(async (req, res) => {
   if (req.session.round !== 'personal') return res.status(400).json({ error: 'invalid_input', detail: 'not an interview session' });
 

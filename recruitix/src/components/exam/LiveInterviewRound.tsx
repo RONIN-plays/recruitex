@@ -13,40 +13,26 @@ import {
   ClipboardList,
   Camera,
 } from 'lucide-react';
-import { startInterview, respondToInterview, finishInterview } from '@/lib/interview';
+import { startInterview, respondToInterview, finishInterview, transcribeAnswer } from '@/lib/interview';
 
 interface LiveInterviewRoundProps {
   sessionId: string;
   title: string;
   durationMin: number;
   cameraVideoRef: RefObject<HTMLVideoElement>;
+  micStream: MediaStream;
   onSubmit: (result: { score: number; pct: number; answers: Record<string, string> }) => void;
 }
 
 type Phase = 'connecting' | 'speaking' | 'ready' | 'recording' | 'processing' | 'finishing' | 'error';
 
-// SpeechRecognition is a non-standard, vendor-prefixed Web API — not in TS's DOM lib, hence the
-// minimal local shape and `any`-typed event handlers below rather than fighting for real types.
-interface SpeechRecognitionLike {
-  start(): void;
-  stop(): void;
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  onresult: ((event: any) => void) | null;
-  onerror: ((event: any) => void) | null;
-  onend: (() => void) | null;
-  onstart: (() => void) | null;
-  onaudiostart: (() => void) | null;
-  onsoundstart: (() => void) | null;
-  onspeechstart: (() => void) | null;
-  onspeechend: (() => void) | null;
-  onaudioend: (() => void) | null;
-}
-
-function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
-  const w = window as unknown as { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike };
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+// Recorded clips are transcribed server-side via Whisper (server/lib/transcription.js) rather than
+// the browser's own Web Speech API — that API proved unreliable across browsers/networks/regions
+// (silent failures with no error event at all in some setups), whereas a plain recording always
+// either produces audio or fails loudly and immediately via getUserMedia/MediaRecorder.
+const PREFERRED_MIME_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+function pickSupportedMimeType(): string {
+  return PREFERRED_MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) ?? '';
 }
 
 const formatTime = (seconds: number) => {
@@ -60,26 +46,21 @@ const formatTime = (seconds: number) => {
 const ESTIMATED_QUESTIONS = 6;
 const TALK_BAR_HEIGHTS = [6, 10, 14, 10, 6];
 
-/** AI-conducted "Live Interview": Claude asks questions (spoken via TTS), candidate answers via mic (transcribed via STT). */
-const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onSubmit }: LiveInterviewRoundProps) => {
+/** AI-conducted "Live Interview": Claude asks questions (spoken via TTS), candidate answers via mic (recorded and transcribed server-side). */
+const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, micStream, onSubmit }: LiveInterviewRoundProps) => {
   const [phase, setPhase] = useState<Phase>('connecting');
   const [currentQuestion, setCurrentQuestion] = useState('');
   const [questionNumber, setQuestionNumber] = useState(0);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [lastAnswer, setLastAnswer] = useState('');
-  const [liveTranscript, setLiveTranscript] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [timeLeft, setTimeLeft] = useState(durationMin * 60);
   const [speakerMuted, setSpeakerMuted] = useState(false);
   const [activeTab, setActiveTab] = useState<'conversation' | 'notes'>('conversation');
   const [notes, setNotes] = useState('');
 
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  // True while the candidate intends to still be recording — distinguishes a deliberate
-  // stopRecording() from the browser silently ending recognition on its own (a known Chrome
-  // quirk even with continuous:true, especially after a short pause in speech), so onend can
-  // tell whether to auto-restart or leave it stopped.
-  const shouldKeepListeningRef = useRef(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const finishedRef = useRef(false);
   const speakerMutedRef = useRef(false);
   // Chrome/Edge populate the voice list asynchronously — grabbing it once on mount can come back
@@ -129,8 +110,7 @@ const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onS
   const finalize = async () => {
     if (finishedRef.current) return;
     finishedRef.current = true;
-    shouldKeepListeningRef.current = false;
-    recognitionRef.current?.stop();
+    if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
     window.speechSynthesis?.cancel();
     setPhase('finishing');
     try {
@@ -172,9 +152,8 @@ const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onS
 
     return () => {
       cancelled = true;
-      shouldKeepListeningRef.current = false;
       window.speechSynthesis?.cancel();
-      recognitionRef.current?.stop();
+      if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
@@ -192,96 +171,58 @@ const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onS
   }, [timeLeft, phase]);
 
   const startRecording = () => {
-    const RecognitionCtor = getSpeechRecognitionCtor();
-    if (!RecognitionCtor) {
-      setErrorMessage('Speech recognition is not supported in this browser. Please use Chrome or Edge.');
+    if (typeof MediaRecorder === 'undefined') {
+      setErrorMessage('Audio recording is not supported in this browser. Please use a recent Chrome, Edge, or Firefox.');
       setPhase('error');
       return;
     }
 
-    setLiveTranscript('');
-    const recognition = new RecognitionCtor();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    const mimeType = pickSupportedMimeType();
+    const recorder = mimeType ? new MediaRecorder(micStream, { mimeType }) : new MediaRecorder(micStream);
+    audioChunksRef.current = [];
 
-    // Temporary lifecycle logging to pin down exactly where transcription is stalling: whether
-    // the mic is ever actually captured, whether sound/speech is detected in it, and whether the
-    // backend ever returns a result — each is a different root cause with a different fix.
-    /* eslint-disable no-console */
-    recognition.onstart = () => console.log('[speech] recognition started');
-    recognition.onaudiostart = () => console.log('[speech] audio capture started (mic is being read)');
-    recognition.onsoundstart = () => console.log('[speech] sound detected');
-    recognition.onspeechstart = () => console.log('[speech] speech detected');
-    recognition.onspeechend = () => console.log('[speech] speech ended');
-    recognition.onaudioend = () => console.log('[speech] audio capture ended');
-    /* eslint-enable no-console */
-
-    let finalText = '';
-    recognition.onresult = (event) => {
-      // eslint-disable-next-line no-console
-      console.log('[speech] onresult fired — resultIndex:', event.resultIndex, 'results.length:', event.results.length);
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) finalText += `${result[0].transcript} `;
-        else interim += result[0].transcript;
-      }
-      setLiveTranscript((finalText + interim).trim());
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) audioChunksRef.current.push(event.data);
     };
 
-    // Most errors here are transient (e.g. 'no-speech' fires constantly during a normal pause
-    // to think) and are recoverable via the onend auto-restart below — only bail out to 'ready'
-    // on errors that mean recognition genuinely cannot continue. Logged unconditionally (even the
-    // "recoverable" ones) since a browser/network that fails every single restart attempt — e.g.
-    // 'network' errors from the speech backend being unreachable — looks identical to "silently
-    // never transcribes anything" from the UI alone otherwise.
-    const FATAL_ERRORS = new Set(['not-allowed', 'audio-capture', 'service-not-allowed']);
-    recognition.onerror = (event) => {
-      // eslint-disable-next-line no-console
-      console.error('Speech recognition error:', event.error);
-      if (FATAL_ERRORS.has(event.error)) {
-        shouldKeepListeningRef.current = false;
-        setPhase('ready');
-      }
-    };
-
-    recognition.onend = () => {
-      if (shouldKeepListeningRef.current) {
-        try {
-          recognition.start();
-        } catch {
-          // Already starting/started — the browser will settle on its own; next onend retries.
-        }
-      }
-    };
-
-    shouldKeepListeningRef.current = true;
-    recognitionRef.current = recognition;
-    recognition.start();
+    mediaRecorderRef.current = recorder;
+    recorder.start();
     setPhase('recording');
   };
 
   const stopRecording = async () => {
-    shouldKeepListeningRef.current = false;
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-
-    const answer = liveTranscript.trim();
-    setLiveTranscript('');
-    if (!answer) {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== 'recording') {
       setPhase('ready');
       return;
     }
 
-    setLastAnswer(answer);
-    setAnsweredCount((c) => c + 1);
     setPhase('processing');
+    const audioBlob = await new Promise<Blob>((resolve) => {
+      recorder.onstop = () => resolve(new Blob(audioChunksRef.current, { type: recorder.mimeType || 'audio/webm' }));
+      recorder.stop();
+    });
+    mediaRecorderRef.current = null;
+    audioChunksRef.current = [];
+
+    if (audioBlob.size === 0) {
+      setPhase('ready');
+      return;
+    }
+
     try {
+      const answer = (await transcribeAnswer(sessionId, audioBlob)).trim();
+      if (!answer) {
+        setPhase('ready');
+        return;
+      }
+
+      setLastAnswer(answer);
+      setAnsweredCount((c) => c + 1);
       const turn = await respondToInterview(sessionId, answer);
       await askQuestion(turn.reply, turn.interviewComplete);
     } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : 'Could not send your answer.');
+      setErrorMessage(err instanceof Error ? err.message : 'Could not process your answer.');
       setPhase('error');
     }
   };
@@ -520,7 +461,7 @@ const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onS
                       </div>
                     </div>
 
-                    {(phase === 'recording' || lastAnswer) && (
+                    {(phase === 'recording' || phase === 'processing' || lastAnswer) && (
                       <div className="flex gap-2.5 flex-row-reverse">
                         <div className="w-6 h-6 rounded-full bg-gray-200 text-gray-600 flex items-center justify-center shrink-0 text-[9px] font-semibold">
                           You
@@ -528,7 +469,7 @@ const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onS
                         <div className="flex-1 min-w-0">
                           <span className="text-[11px] font-semibold text-gray-900 block text-right">You</span>
                           <div className="bg-gray-100 rounded-xl rounded-tr-sm px-3 py-1.5 mt-0.5 text-xs text-gray-700 text-right">
-                            {phase === 'recording' ? liveTranscript || 'Listening...' : lastAnswer}
+                            {phase === 'recording' ? 'Recording — tap the mic again when done...' : phase === 'processing' ? 'Transcribing...' : lastAnswer}
                           </div>
                         </div>
                       </div>
@@ -561,13 +502,13 @@ const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onS
                     )}
                     <p className="flex-1 min-w-0 text-xs text-gray-500 truncate">
                       {phase === 'recording'
-                        ? liveTranscript || 'Listening — speak your answer...'
+                        ? 'Recording — tap the mic again when you’re done answering...'
                         : phase === 'ready'
                           ? 'Tap the mic and speak your answer.'
                           : phase === 'speaking'
                             ? 'Listen to the question...'
                             : phase === 'processing'
-                              ? 'Processing your answer...'
+                              ? 'Transcribing your answer...'
                               : phase === 'finishing'
                                 ? 'Finalizing your evaluation...'
                                 : phase === 'connecting'
