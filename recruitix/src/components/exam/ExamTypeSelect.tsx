@@ -6,13 +6,20 @@ import { Code, Video, MessageSquare, ArrowRight, Clock, Target, Building2 } from
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { apiPost } from '@/lib/api';
 import { EXAM_TYPE_LABELS, EXAM_TYPE_DESCRIPTIONS, type RoundName } from '@/lib/examRounds';
+import ResumeUpload from '@/components/auth/ResumeUpload';
 import type { Company } from './CompanySelect';
 
 interface ExamTypeSelectProps {
   company: Company;
   onSessionReady: (sessionId: string, round: RoundName) => void;
   onBack: () => void;
+  hasResume: boolean;
+  onResumeUploaded: () => Promise<void> | void;
 }
+
+// These two rounds ask questions grounded in the candidate's resume, so they can't meaningfully
+// run without one on file — Technical Assessment stays resume-optional (generic DSA/aptitude/quant).
+const RESUME_REQUIRED_ROUNDS: RoundName[] = ['personal', 'hr'];
 
 const EXAM_TYPE_ICONS: Record<RoundName, typeof Code> = {
   technical: Code,
@@ -26,11 +33,14 @@ const durationForRound = (company: Company, round: RoundName): number =>
 const ROUND_ORDER: RoundName[] = ['technical', 'personal', 'hr'];
 
 /** Picks which single exam type to attempt for the chosen company — creates (or resumes) a session scoped to just that round. */
-const ExamTypeSelect = ({ company, onSessionReady, onBack }: ExamTypeSelectProps) => {
+const ExamTypeSelect = ({ company, onSessionReady, onBack, hasResume, onResumeUploaded }: ExamTypeSelectProps) => {
   const [starting, setStarting] = useState<RoundName | null>(null);
   const [error, setError] = useState('');
+  // Set only when the candidate picked a resume-required round without one on file — blocks on
+  // the mandatory upload gate below instead of creating the session.
+  const [resumeGateRound, setResumeGateRound] = useState<RoundName | null>(null);
 
-  const handleSelect = async (round: RoundName) => {
+  const startSession = async (round: RoundName) => {
     setStarting(round);
     setError('');
     try {
@@ -41,6 +51,29 @@ const ExamTypeSelect = ({ company, onSessionReady, onBack }: ExamTypeSelectProps
       setStarting(null);
     }
   };
+
+  const handleSelect = (round: RoundName) => {
+    if (RESUME_REQUIRED_ROUNDS.includes(round) && !hasResume) {
+      setResumeGateRound(round);
+      return;
+    }
+    startSession(round);
+  };
+
+  if (resumeGateRound) {
+    return (
+      <ResumeUpload
+        mandatory
+        onCancel={() => setResumeGateRound(null)}
+        onDone={async () => {
+          await onResumeUploaded();
+          const round = resumeGateRound;
+          setResumeGateRound(null);
+          startSession(round);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-white dark:bg-black">

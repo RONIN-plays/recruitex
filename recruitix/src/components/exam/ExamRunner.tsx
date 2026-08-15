@@ -5,12 +5,10 @@ import { loadFaceModels, getFaceDescriptor } from '@/lib/faceEngine';
 import { loadFaceLandmarker, detectFrame } from '@/lib/faceMesh';
 import { createStrikeTracker, createViolationPolicy, type ConfirmedViolation } from '@/utils/proctorEngine';
 import {
-  fetchRoundQuestions,
   startTechnicalRound,
+  startHrRound,
   submitTechnicalRound,
-  submitRoundResponses,
-  recordRoundScore,
-  scoreAnswer,
+  submitHrRound,
   EXAM_TYPE_LABELS,
   type QuestionBankRow,
   type RoundName,
@@ -393,16 +391,16 @@ const ExamRunner = ({ sessionId, screenStream, micStream, onExamComplete }: Exam
   }, [loading]);
 
   // Fetch this round's questions whenever currentRound changes. The Live Interview round
-  // ('personal') is Claude-driven conversation, not question-bank content — nothing to fetch.
-  // Technical questions are LLM-generated fresh per session rather than pulled from the static
-  // per-company seeded bank (HR still uses that static bank).
+  // ('personal') is Groq-driven conversation, not question-bank content — nothing to fetch.
+  // Technical and HR questions are both LLM-generated fresh per session (HR grounded in the
+  // candidate's resume when one is on file) rather than pulled from a static seeded bank.
   useEffect(() => {
     if (!session?.companyId || !session.currentRound || session.currentRound === 'personal') return;
     if (session.currentRound === 'technical') {
       startTechnicalRound(sessionId).then(setQuestions);
       return;
     }
-    fetchRoundQuestions(session.companyId, session.currentRound).then(setQuestions);
+    startHrRound(sessionId).then(setQuestions);
   }, [sessionId, session?.companyId, session?.currentRound]);
 
   const handleRoundSubmit = async (round: RoundName, result: { score: number; pct: number; answers: Record<string, string> }) => {
@@ -410,18 +408,12 @@ const ExamRunner = ({ sessionId, screenStream, micStream, onExamComplete }: Exam
       // Grading (MCQ exact-match and LLM-judged coding answers) happens entirely server-side,
       // since correctAnswer/rubric was never sent to the client for this round.
       await submitTechnicalRound(sessionId, result.answers);
-    } else {
-      await submitRoundResponses(
-        sessionId,
-        questions.map((q) => ({
-          questionId: q.id,
-          round,
-          answer: result.answers[q.id] ?? '',
-          score: scoreAnswer(q, result.answers[q.id] ?? ''),
-        })),
-      );
-      await recordRoundScore(sessionId, round, result.score, result.pct);
+    } else if (round === 'hr') {
+      // Same story as technical — an LLM grades each answer against its rubric server-side.
+      await submitHrRound(sessionId, result.answers);
     }
+    // round === 'personal': nothing to do here — /interview/finish (called by LiveInterviewRound
+    // itself) already graded the transcript and persisted personalScore/personalPct server-side.
 
     const { session: updated } = await apiGet<{ session: SessionInfo }>(`/api/exam/sessions/${sessionId}`);
 

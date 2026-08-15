@@ -6,13 +6,13 @@ import { getDatabase } from "firebase/database";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyA8tOtnNCTYIscW1UYEChgovoVdC3TBB8A",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "recruitx-b3d63.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "recruitx-b3d63",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "recruitx-b3d63.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "659225267914",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:659225267914:web:7a11fdfb31a9ca0e1a6e33",
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-ZXWCZGXYJ0"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyAVryEjbHzE_X9fR7Es27q_f-e1V2Hbxy8",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "recruitex-7557c.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "recruitex-7557c",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "recruitex-7557c.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "665620562251",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:665620562251:web:634c205efb5c1f21c4a8ce",
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-R04N369DJX"
 };
 
 // Initialize Firebase

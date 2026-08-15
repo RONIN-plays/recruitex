@@ -7,16 +7,19 @@ import ExamTypeSelect from './ExamTypeSelect';
 import ExamFaceGate from './ExamFaceGate';
 import AssignmentBriefing from './AssignmentBriefing';
 import ExamRunner from './ExamRunner';
+import ProfilePage from './ProfilePage';
 import type { RoundName } from '@/lib/examRounds';
+import { useAuthProfile } from '@/hooks/useAuthProfile';
 
 interface CandidateFlowProps {
   onBack: () => void;
 }
 
-type Step = 'select_company' | 'select_exam_type' | 'face_gate' | 'assignment_briefing' | 'manual_review' | 'exam';
+type Step = 'select_company' | 'select_exam_type' | 'face_gate' | 'assignment_briefing' | 'manual_review' | 'exam' | 'profile';
 
 /** Orchestrates company selection -> exam type selection -> face+liveness gate -> assignment briefing -> proctored exam. */
 const CandidateFlow = ({ onBack }: CandidateFlowProps) => {
+  const { profile, refreshProfile } = useAuthProfile();
   const [step, setStep] = useState<Step>('select_company');
   const [company, setCompany] = useState<Company | null>(null);
   const [examType, setExamType] = useState<RoundName | null>(null);
@@ -32,8 +35,13 @@ const CandidateFlow = ({ onBack }: CandidateFlowProps) => {
           setCompany(c);
           setStep('select_exam_type');
         }}
+        onOpenProfile={() => setStep('profile')}
       />
     );
+  }
+
+  if (step === 'profile') {
+    return <ProfilePage onBack={() => setStep('select_company')} />;
   }
 
   if (step === 'select_exam_type' && company) {
@@ -41,6 +49,8 @@ const CandidateFlow = ({ onBack }: CandidateFlowProps) => {
       <ExamTypeSelect
         company={company}
         onBack={() => setStep('select_company')}
+        hasResume={profile?.hasResume ?? false}
+        onResumeUploaded={refreshProfile}
         onSessionReady={(id, round) => {
           setSessionId(id);
           setExamType(round);

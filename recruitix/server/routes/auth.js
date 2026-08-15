@@ -71,7 +71,11 @@ router.post('/google', asyncHandler(async (req, res) => {
   let decoded;
   try {
     decoded = await verifyGoogleIdToken(idToken);
-  } catch {
+  } catch (err) {
+    // Logged so the real cause (bad/expired token vs. a JWKS fetch failure, etc.) is visible in
+    // server/Vercel function logs — the client only ever sees the generic message below, never
+    // err.message.
+    console.error('Google ID token verification failed:', err);
     return res.status(401).json({ error: 'invalid_token', detail: 'Could not verify Google sign-in. Please try again.' });
   }
 

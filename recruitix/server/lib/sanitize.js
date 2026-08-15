@@ -8,5 +8,6 @@ export function toUserDto(userDoc) {
     role: userDoc.role,
     faceEnrolled: Boolean(userDoc.faceEnrolled),
     enrollmentStatus: userDoc.enrollmentStatus ?? 'pending',
+    hasResume: Boolean(userDoc.resumeText),
   };
 }

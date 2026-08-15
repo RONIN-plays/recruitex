@@ -14,7 +14,7 @@ function getClient() {
 // Free-tier Groq model — fast, good instruction-following for conversational JSON output.
 const MODEL = 'llama-3.3-70b-versatile';
 
-const INTERVIEWER_SYSTEM =
+const INTERVIEWER_SYSTEM_BASE =
   "You are conducting a live, spoken mock interview for a software engineering candidate, standing in " +
   "for a human interviewer. Ask one question at a time — a mix of behavioral and technical/problem-solving " +
   "questions appropriate for a general software role. The candidate's answers arrive as speech-to-text " +
@@ -22,9 +22,22 @@ const INTERVIEWER_SYSTEM =
   "commenting on them. Ask a natural, specific follow-up based on what the candidate actually said, the way " +
   "a real interviewer would. Keep your own questions concise, one or two sentences, since they are spoken " +
   "aloud via text-to-speech. After 5 to 7 questions covering a reasonable range of topics, wrap up warmly " +
-  "and set interviewComplete to true on that final reply instead of asking another question.\n\n" +
+  "and set interviewComplete to true on that final reply instead of asking another question.";
+
+const INTERVIEWER_SYSTEM_JSON_SHAPE =
   'Respond with ONLY a raw JSON object of this exact shape, no markdown fences, no extra text: ' +
   '{"reply": string, "interviewComplete": boolean}';
+
+function buildInterviewerSystem(resumeText) {
+  const resumeSection = resumeText
+    ? "\n\nHere is the candidate's resume:\n\n" +
+      `${resumeText}\n\n` +
+      'Ground most of your questions in this resume — ask about specific projects, roles, technologies, ' +
+      'and claims it mentions, the way a real interviewer who read it beforehand would, rather than asking ' +
+      'generic questions a candidate with any background could answer.'
+    : '';
+  return `${INTERVIEWER_SYSTEM_BASE}${resumeSection}\n\n${INTERVIEWER_SYSTEM_JSON_SHAPE}`;
+}
 
 const EVALUATOR_SYSTEM =
   "You are grading a completed live interview transcript. Be fair, specific, and evidence-based — cite " +
@@ -60,7 +73,7 @@ async function withOneRetry(fn) {
   }
 }
 
-export async function generateInterviewerTurn(transcriptMessages) {
+export async function generateInterviewerTurn(transcriptMessages, resumeText) {
   let parsed;
   try {
     parsed = await withOneRetry(async () => {
@@ -68,7 +81,7 @@ export async function generateInterviewerTurn(transcriptMessages) {
         model: MODEL,
         temperature: 0.7,
         response_format: { type: 'json_object' },
-        messages: [{ role: 'system', content: INTERVIEWER_SYSTEM }, ...toApiMessages(transcriptMessages)],
+        messages: [{ role: 'system', content: buildInterviewerSystem(resumeText) }, ...toApiMessages(transcriptMessages)],
       });
       return parseJsonResponse(completion.choices[0]?.message?.content ?? '{}');
     });

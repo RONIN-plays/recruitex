@@ -9,6 +9,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import RecruiterPortal from '@/components/RecruiterPortal';
 import AuthGate from '@/components/auth/AuthGate';
 import EnrollFace from '@/components/auth/EnrollFace';
+import ResumeUpload from '@/components/auth/ResumeUpload';
 import CandidateFlow from '@/components/exam/CandidateFlow';
 import { HeroScrollDemo } from '@/components/HeroScrollDemo';
 import { TimelineDemo } from '@/components/TimelineDemo';
@@ -28,6 +29,9 @@ const Index = () => {
   // Only true once the candidate has explicitly clicked "Start Assessment" (or just
   // signed in) — keeps a stale token in localStorage from skipping the landing page.
   const [candidateSessionActive, setCandidateSessionActive] = useState(false);
+  // Resume upload is skippable (unlike face enrollment) — once skipped, don't nag again
+  // for the rest of this browser session; they can still add one later from Company Select.
+  const [resumeSkipped, setResumeSkipped] = useState(false);
 
   // Candidate identity/session lives in a JWT (localStorage) + the Express API's /auth/me.
   const { profile: candidateProfile, loading: authLoading, refreshProfile } = useAuthProfile();
@@ -97,6 +101,9 @@ const Index = () => {
     }
     if (candidateProfile && !candidateProfile.faceEnrolled) {
       return <EnrollFace onEnrolled={refreshProfile} />;
+    }
+    if (candidateProfile && !candidateProfile.hasResume && !resumeSkipped) {
+      return <ResumeUpload onDone={refreshProfile} onSkip={() => setResumeSkipped(true)} />;
     }
     if (candidateProfile) {
       return <CandidateFlow onBack={handleCandidateLogout} />;

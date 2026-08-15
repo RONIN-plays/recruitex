@@ -6,6 +6,7 @@ import { isValidEmbedding, euclideanDistance, THRESHOLD } from '../lib/faceMatch
 import { asyncHandler } from '../lib/asyncHandler.js';
 import { generateInterviewerTurn, generateInterviewEvaluation } from '../lib/interviewer.js';
 import { generateTechnicalQuestions, gradeCodingAnswer } from '../lib/technicalRound.js';
+import { generateHrQuestions, gradeHrAnswer } from '../lib/hrRound.js';
 import { severityForType } from '../lib/violations.js';
 
 const router = express.Router();
@@ -49,6 +50,14 @@ const loadOwnedSession = asyncHandler(async (req, res, next) => {
   req.db = db;
   next();
 });
+
+// Both the Live Interview and HR Simulation rounds ground their questions in the candidate's
+// resume when one is on file — a missing resume just falls back to the fully generic behavior
+// these generators already had before resume support existed.
+async function getResumeText(db, userId) {
+  const user = await db.collection('users').findOne({ _id: userId }, { projection: { resumeText: 1 } });
+  return user?.resumeText || null;
+}
 
 // Creates a new single-exam-type attempt for a company (Technical Assessment / Live Interview /
 // HR Simulation — internal round keys 'technical' / 'personal' / 'hr'), or resumes an unfinished
@@ -150,52 +159,6 @@ router.post('/sessions/:id/unlock', requireAuth, loadOwnedSession, asyncHandler(
 
   await req.db.collection('examSessions').updateOne({ _id: req.session._id }, { $set: { faceGateAttempts: attempts } });
   res.json({ unlocked: false, reason, attemptsRemaining: MAX_FACE_GATE_ATTEMPTS - attempts });
-}));
-
-router.post('/sessions/:id/responses', requireAuth, loadOwnedSession, asyncHandler(async (req, res) => {
-  const { responses } = req.body ?? {};
-  if (!Array.isArray(responses)) return res.status(400).json({ error: 'invalid_input' });
-  if (responses.length === 0) return res.json({ ok: true });
-
-  const docs = responses.map((r) => ({
-    sessionId: req.session._id,
-    questionId: r.questionId ? new ObjectId(r.questionId) : null,
-    round: r.round,
-    answer: r.answer ?? '',
-    score: typeof r.score === 'number' ? r.score : 0,
-    createdAt: new Date(),
-  }));
-  await req.db.collection('examResponses').insertMany(docs);
-  res.json({ ok: true });
-}));
-
-// Mirrors the (superseded) Supabase plan's record_round_score RPC. Since a session now covers
-// exactly one exam type, recording that round's score finalizes the session immediately — no
-// more advancing through technical -> personal -> hr in sequence.
-router.post('/sessions/:id/round-score', requireAuth, loadOwnedSession, asyncHandler(async (req, res) => {
-  const { round, score, pct } = req.body ?? {};
-  if (!ROUND_ORDER.includes(round) || typeof score !== 'number' || typeof pct !== 'number') {
-    return res.status(400).json({ error: 'invalid_input' });
-  }
-  if (round !== req.session.round) {
-    return res.status(400).json({ error: 'invalid_input', detail: "round does not match this session's exam type" });
-  }
-
-  await req.db.collection('examSessions').updateOne(
-    { _id: req.session._id },
-    {
-      $set: {
-        [`${round}Score`]: score,
-        [`${round}Pct`]: pct,
-        currentRound: null,
-        status: 'submitted',
-        endedAt: new Date(),
-        overallPct: pct,
-      },
-    },
-  );
-
-  res.json({ ok: true });
 }));
 
 // LLM-generated Technical Assessment (round === 'technical'): a fresh set of MCQ + coding
@@ -300,6 +263,107 @@ router.post('/sessions/:id/technical/submit', requireAuth, loadOwnedSession, asy
   res.json({ score: earned, pct });
 }));
 
+// LLM-generated HR Simulation (round === 'hr'): a fresh set of resume-aware behavioral questions
+// generated per session on first load and persisted to questionBank tagged with this session's
+// id, mirroring the technical round's per-session generation above. correctAnswer (a grading
+// rubric) is never sent to the client, same as the technical round — grading happens server-side
+// in /hr/submit below via an LLM judging the answer against the rubric.
+router.post('/sessions/:id/hr/start', requireAuth, loadOwnedSession, asyncHandler(async (req, res) => {
+  if (req.session.round !== 'hr') return res.status(400).json({ error: 'invalid_input', detail: 'not an HR session' });
+
+  let docs = await req.db.collection('questionBank').find({ sessionId: req.session._id, round: 'hr' }).toArray();
+
+  if (docs.length === 0) {
+    const resumeText = await getResumeText(req.db, req.session.userId);
+    const generated = await generateHrQuestions(resumeText);
+    const now = new Date();
+    const toInsert = generated.map((q) => ({
+      ...q,
+      round: 'hr',
+      companyId: req.session.companyId,
+      sessionId: req.session._id,
+      createdAt: now,
+    }));
+    const { insertedIds } = await req.db.collection('questionBank').insertMany(toInsert);
+    docs = toInsert.map((doc, i) => ({ ...doc, _id: insertedIds[i] }));
+  }
+
+  res.json({
+    questions: docs.map((q) => ({
+      id: q._id.toString(),
+      round: q.round,
+      qtype: q.qtype,
+      category: q.category ?? null,
+      prompt: q.prompt,
+      options: q.options ?? null,
+      correctAnswer: null,
+      points: q.points,
+    })),
+  });
+}));
+
+router.post('/sessions/:id/hr/submit', requireAuth, loadOwnedSession, asyncHandler(async (req, res) => {
+  if (req.session.round !== 'hr') return res.status(400).json({ error: 'invalid_input', detail: 'not an HR session' });
+
+  const { answers } = req.body ?? {};
+  if (!answers || typeof answers !== 'object') return res.status(400).json({ error: 'invalid_input' });
+
+  const questions = await req.db.collection('questionBank').find({ sessionId: req.session._id, round: 'hr' }).toArray();
+  if (questions.length === 0) {
+    return res.status(400).json({ error: 'invalid_input', detail: 'hr round was not started' });
+  }
+
+  let earned = 0;
+  let possible = 0;
+  const responseDocs = [];
+
+  for (const q of questions) {
+    const answer = typeof answers[q._id.toString()] === 'string' ? answers[q._id.toString()] : '';
+    possible += q.points;
+
+    let score = 0;
+    if (answer.trim()) {
+      // Same fallback-to-zero-on-failure rationale as the technical round's grading loop — a
+      // grading hiccup on one question shouldn't block the candidate's submission.
+      try {
+        const { scoreFraction } = await gradeHrAnswer(q, answer);
+        score = scoreFraction * q.points;
+      } catch (err) {
+        console.error('HR answer grading failed:', err);
+      }
+    }
+    earned += score;
+
+    responseDocs.push({
+      sessionId: req.session._id,
+      questionId: q._id,
+      round: 'hr',
+      answer,
+      score,
+      createdAt: new Date(),
+    });
+  }
+
+  await req.db.collection('examResponses').insertMany(responseDocs);
+
+  const pct = possible > 0 ? Math.round((earned / possible) * 100) : 0;
+  await req.db.collection('examSessions').updateOne(
+    { _id: req.session._id },
+    {
+      $set: {
+        hrScore: earned,
+        hrPct: pct,
+        currentRound: null,
+        status: 'submitted',
+        endedAt: new Date(),
+        overallPct: pct,
+      },
+    },
+  );
+
+  res.json({ score: earned, pct });
+}));
+
 // AI-driven Live Interview (round === 'personal'): a Claude-conducted conversational interview,
 // one question at a time, transcribed by the candidate's browser and spoken back via TTS. The
 // full exchange is persisted in interviewTranscripts so /finish can grade the whole conversation.
@@ -312,8 +376,9 @@ router.post('/sessions/:id/interview/start', requireAuth, loadOwnedSession, asyn
     if (last?.role === 'assistant') return res.json({ reply: last.text, interviewComplete: false });
   }
 
+  const resumeText = await getResumeText(req.db, req.session.userId);
   const messages = [{ role: 'user', text: 'Begin the interview.', createdAt: new Date() }];
-  const turn = await generateInterviewerTurn(messages);
+  const turn = await generateInterviewerTurn(messages, resumeText);
   messages.push({ role: 'assistant', text: turn.reply, createdAt: new Date() });
 
   await req.db.collection('interviewTranscripts').updateOne(
@@ -331,8 +396,9 @@ router.post('/sessions/:id/interview/respond', requireAuth, loadOwnedSession, as
   const transcript = await req.db.collection('interviewTranscripts').findOne({ sessionId: req.session._id });
   if (!transcript) return res.status(404).json({ error: 'not_found' });
 
+  const resumeText = await getResumeText(req.db, req.session.userId);
   transcript.messages.push({ role: 'user', text: answer, createdAt: new Date() });
-  const turn = await generateInterviewerTurn(transcript.messages);
+  const turn = await generateInterviewerTurn(transcript.messages, resumeText);
   transcript.messages.push({ role: 'assistant', text: turn.reply, createdAt: new Date() });
 
   await req.db.collection('interviewTranscripts').updateOne(
@@ -349,7 +415,23 @@ router.post('/sessions/:id/interview/finish', requireAuth, loadOwnedSession, asy
   }
 
   const evaluation = await generateInterviewEvaluation(transcript.messages);
-  await req.db.collection('examSessions').updateOne({ _id: req.session._id }, { $set: { personalFeedback: evaluation } });
+  // Persists the round's own score directly here (like technical/submit and hr/submit do) rather
+  // than requiring a second, separately-callable endpoint that would just trust whatever score the
+  // client sends back — the LLM's evaluation of this transcript is the only source of truth.
+  await req.db.collection('examSessions').updateOne(
+    { _id: req.session._id },
+    {
+      $set: {
+        personalFeedback: evaluation,
+        personalScore: evaluation.score,
+        personalPct: evaluation.score,
+        currentRound: null,
+        status: 'submitted',
+        endedAt: new Date(),
+        overallPct: evaluation.score,
+      },
+    },
+  );
 
   res.json({
     score: evaluation.score,
