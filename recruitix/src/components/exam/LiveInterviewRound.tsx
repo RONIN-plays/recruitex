@@ -212,9 +212,14 @@ const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onS
 
     // Most errors here are transient (e.g. 'no-speech' fires constantly during a normal pause
     // to think) and are recoverable via the onend auto-restart below — only bail out to 'ready'
-    // on errors that mean recognition genuinely cannot continue.
+    // on errors that mean recognition genuinely cannot continue. Logged unconditionally (even the
+    // "recoverable" ones) since a browser/network that fails every single restart attempt — e.g.
+    // 'network' errors from the speech backend being unreachable — looks identical to "silently
+    // never transcribes anything" from the UI alone otherwise.
     const FATAL_ERRORS = new Set(['not-allowed', 'audio-capture', 'service-not-allowed']);
     recognition.onerror = (event) => {
+      // eslint-disable-next-line no-console
+      console.error('Speech recognition error:', event.error);
       if (FATAL_ERRORS.has(event.error)) {
         shouldKeepListeningRef.current = false;
         setPhase('ready');
