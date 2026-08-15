@@ -36,6 +36,12 @@ interface SpeechRecognitionLike {
   onresult: ((event: any) => void) | null;
   onerror: ((event: any) => void) | null;
   onend: (() => void) | null;
+  onstart: (() => void) | null;
+  onaudiostart: (() => void) | null;
+  onsoundstart: (() => void) | null;
+  onspeechstart: (() => void) | null;
+  onspeechend: (() => void) | null;
+  onaudioend: (() => void) | null;
 }
 
 function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
@@ -199,8 +205,22 @@ const LiveInterviewRound = ({ sessionId, title, durationMin, cameraVideoRef, onS
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
+    // Temporary lifecycle logging to pin down exactly where transcription is stalling: whether
+    // the mic is ever actually captured, whether sound/speech is detected in it, and whether the
+    // backend ever returns a result — each is a different root cause with a different fix.
+    /* eslint-disable no-console */
+    recognition.onstart = () => console.log('[speech] recognition started');
+    recognition.onaudiostart = () => console.log('[speech] audio capture started (mic is being read)');
+    recognition.onsoundstart = () => console.log('[speech] sound detected');
+    recognition.onspeechstart = () => console.log('[speech] speech detected');
+    recognition.onspeechend = () => console.log('[speech] speech ended');
+    recognition.onaudioend = () => console.log('[speech] audio capture ended');
+    /* eslint-enable no-console */
+
     let finalText = '';
     recognition.onresult = (event) => {
+      // eslint-disable-next-line no-console
+      console.log('[speech] onresult fired — resultIndex:', event.resultIndex, 'results.length:', event.results.length);
       let interim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
