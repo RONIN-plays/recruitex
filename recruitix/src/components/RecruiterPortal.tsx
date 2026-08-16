@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -6,6 +7,7 @@ import { Progress } from '@/components/ui/progress';
 import { RecruiterStatsPin } from '@/components/ui/recruiter-stats-pin';
 import { ArrowLeft, Users, Settings, BarChart3, Eye, CheckCircle, Clock, AlertTriangle, TrendingUp, Activity, Loader, ShieldAlert, Radio } from 'lucide-react';
 import { useRecruiterOverview, type RoundResult } from '@/hooks/useRecruiterOverview';
+import CandidateDetailDialog from '@/components/CandidateDetailDialog';
 
 interface RecruiterPortalProps {
   onBack: () => void;
@@ -38,6 +40,7 @@ const formatRelativeTime = (iso: string | null) => {
 
 const RecruiterPortal = ({ onBack }: RecruiterPortalProps) => {
   const { data, loading, error } = useRecruiterOverview();
+  const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
 
   const candidates = data?.candidates ?? [];
   const liveSessions = data?.liveSessions ?? [];
@@ -276,7 +279,12 @@ const RecruiterPortal = ({ onBack }: RecruiterPortalProps) => {
                             <AlertTriangle className="w-4 h-4" />
                             <span>{candidate.violationsCount} integrity flag{candidate.violationsCount === 1 ? '' : 's'}</span>
                           </div>
-                          <Button variant="outline" size="sm" className="flex items-center space-x-2 border-gray-600 text-white hover:bg-gray-800">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedCandidateId(candidate.id)}
+                            className="flex items-center space-x-2 border-gray-600 text-white hover:bg-gray-800"
+                          >
                             <Eye className="w-4 h-4" />
                             <span>View Details</span>
                           </Button>
@@ -436,6 +444,8 @@ const RecruiterPortal = ({ onBack }: RecruiterPortalProps) => {
           </Tabs>
         </div>
       </div>
+
+      <CandidateDetailDialog candidateId={selectedCandidateId} onClose={() => setSelectedCandidateId(null)} />
     </div>
   );
 };

@@ -1,4 +1,5 @@
 import express from 'express';
+import { ObjectId } from 'mongodb';
 import { getDb } from '../db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
@@ -147,6 +148,113 @@ router.get('/overview', asyncHandler(async (req, res) => {
     stats: { totalCandidates, completed, inProgress, passRate, distribution },
     liveSessions,
     recentViolations,
+  });
+}));
+
+// Per-round breakdown for one candidate: the actual questions asked, the answer they gave, and
+// how each was marked — for Technical/HR this is a question-by-question list (joining that
+// round's questionBank against examResponses); for the Live Interview (round 'personal', which
+// has no question bank — it's a free-form Claude conversation) this is the full transcript plus
+// the LLM's evaluation summary. Uses the *latest* session per round for this candidate, same
+// "newest first, first hit per round wins" rule /overview already uses.
+router.get('/candidates/:id', asyncHandler(async (req, res) => {
+  const db = await getDb();
+  let userId;
+  try {
+    userId = new ObjectId(req.params.id);
+  } catch {
+    return res.status(400).json({ error: 'invalid_input' });
+  }
+
+  const user = await db.collection('users').findOne({ _id: userId, role: 'candidate' });
+  if (!user) return res.status(404).json({ error: 'not_found' });
+
+  const [sessions, companies] = await Promise.all([
+    db.collection('examSessions').find({ userId }).sort({ createdAt: -1 }).toArray(),
+    db.collection('companies').find({}).toArray(),
+  ]);
+  const companyNameById = new Map(companies.map((c) => [c._id.toString(), c.name]));
+
+  const latestByRound = {};
+  for (const s of sessions) {
+    if (!latestByRound[s.round]) latestByRound[s.round] = s;
+  }
+
+  function baseRoundInfo(session) {
+    const company = companies.find((c) => c._id.toString() === session.companyId.toString());
+    const abandoned = ACTIVE_STATUSES.includes(session.status) && !isSessionStillLive(session, company);
+    return {
+      status: abandoned ? 'abandoned' : roundStatus(session.status),
+      pct: session[`${session.round}Pct`] ?? null,
+      score: session[`${session.round}Score`] ?? null,
+      company: companyNameById.get(session.companyId.toString()) ?? null,
+      startedAt: session.startedAt,
+      endedAt: session.endedAt,
+    };
+  }
+
+  // Technical / HR: question-by-question, joining this session's questionBank rows (the actual
+  // question + rubric/correct answer, never shown to the candidate during the exam) against the
+  // examResponses rows (the candidate's answer + the score it was actually given).
+  async function buildQuestionRound(session) {
+    if (!session) return null;
+    const [responses, questions] = await Promise.all([
+      db.collection('examResponses').find({ sessionId: session._id }).toArray(),
+      db.collection('questionBank').find({ sessionId: session._id }).toArray(),
+    ]);
+    const questionById = new Map(questions.map((q) => [q._id.toString(), q]));
+
+    const items = responses
+      .map((r) => {
+        const q = r.questionId ? questionById.get(r.questionId.toString()) : null;
+        if (!q) return null;
+        return {
+          prompt: q.prompt,
+          qtype: q.qtype,
+          category: q.category ?? null,
+          options: q.options ?? null,
+          correctAnswer: q.correctAnswer ?? null,
+          points: q.points,
+          answer: r.answer,
+          score: r.score,
+        };
+      })
+      .filter(Boolean);
+
+    return { ...baseRoundInfo(session), questions: items };
+  }
+
+  // Live Interview: no question bank — the "questions and answers" are the conversation itself,
+  // plus the LLM's post-hoc evaluation (summary/strengths/areasToImprove) already computed at
+  // /interview/finish time and stored on the session.
+  async function buildPersonalRound(session) {
+    if (!session) return null;
+    const transcript = await db.collection('interviewTranscripts').findOne({ sessionId: session._id });
+    const messages = transcript?.messages ?? [];
+    // The very first message is always the synthetic "Begin the interview." prompt used
+    // internally to kick off the LLM (see /interview/start) — not something the candidate
+    // actually said, so showing it as their message would misrepresent the record.
+    const candidateFacing = messages[0]?.role === 'user' && messages[0]?.text === 'Begin the interview.' ? messages.slice(1) : messages;
+    return {
+      ...baseRoundInfo(session),
+      feedback: session.personalFeedback ?? null,
+      transcript: candidateFacing.map((m) => ({ role: m.role, text: m.text, createdAt: m.createdAt })),
+    };
+  }
+
+  const [technical, personal, hr] = await Promise.all([
+    buildQuestionRound(latestByRound.technical),
+    buildPersonalRound(latestByRound.personal),
+    buildQuestionRound(latestByRound.hr),
+  ]);
+
+  res.json({
+    candidate: {
+      id: user._id.toString(),
+      name: user.displayName || user.email.split('@')[0],
+      email: user.email,
+    },
+    rounds: { technical, personal, hr },
   });
 }));
 
