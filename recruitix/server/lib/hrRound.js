@@ -53,6 +53,21 @@ function parseJsonResponse(text) {
   return JSON.parse(cleaned);
 }
 
+// llama-3.3-70b's constrained JSON mode occasionally still emits a grammatically invalid object
+// (Groq's own server-side validator rejects it with a 400 before we ever see the completion) —
+// without a retry, that transient glitch would zero out gradeHrAnswer's result for a candidate's
+// answer regardless of how good it actually was, which has nothing to do with their answer's
+// quality. Same fix already used in interviewer.js for the same model/failure mode.
+async function withOneRetry(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Groq generation failed, retrying once:', err?.message || err);
+    return fn();
+  }
+}
+
 function sanitizeQuestions(list) {
   if (!Array.isArray(list)) return [];
   return list
@@ -88,24 +103,25 @@ export async function generateHrQuestions(resumeText) {
 // (correctAnswer) rather than trusting a client-computed score, and the rubric itself is never
 // sent to the client for this round.
 export async function gradeHrAnswer(question, answer) {
-  const completion = await getClient().chat.completions.create({
-    model: MODEL,
-    temperature: 0.2,
-    response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: GRADING_SYSTEM },
-      {
-        role: 'user',
-        content:
-          `Question: ${question.prompt}\n\n` +
-          `Expected themes (rubric): ${question.correctAnswer || 'N/A'}\n\n` +
-          `Candidate's answer:\n${answer || '(no answer given)'}\n\nGrade this answer.`,
-      },
-    ],
+  const parsed = await withOneRetry(async () => {
+    const completion = await getClient().chat.completions.create({
+      model: MODEL,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: GRADING_SYSTEM },
+        {
+          role: 'user',
+          content:
+            `Question: ${question.prompt}\n\n` +
+            `Expected themes (rubric): ${question.correctAnswer || 'N/A'}\n\n` +
+            `Candidate's answer:\n${answer || '(no answer given)'}\n\nGrade this answer.`,
+        },
+      ],
+    });
+    return parseJsonResponse(completion.choices[0]?.message?.content ?? '{}');
   });
 
-  const raw = completion.choices[0]?.message?.content ?? '{}';
-  const parsed = parseJsonResponse(raw);
   const scoreFraction = typeof parsed.scoreFraction === 'number' ? Math.max(0, Math.min(1, parsed.scoreFraction)) : 0;
   return { scoreFraction, feedback: typeof parsed.feedback === 'string' ? parsed.feedback : '' };
 }
