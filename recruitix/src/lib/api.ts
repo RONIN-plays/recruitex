@@ -37,6 +37,13 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
   const isJson = res.headers.get('content-type')?.includes('application/json');
   const data = isJson ? await res.json().catch(() => null) : null;
 
+  if (res.status === 401 && token && !path.startsWith('/api/auth/')) {
+    // Saved login is no longer valid (expired, or the server was reset) — drop it and reload so
+    // the candidate lands back on the sign-in flow instead of seeing a bare "unauthorized".
+    clearToken();
+    window.location.reload();
+  }
+
   if (!res.ok) {
     const message = data?.detail || data?.error || `Request failed (${res.status})`;
     throw new ApiError(res.status, message, data?.error);
