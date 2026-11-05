@@ -12,7 +12,7 @@ function getClient() {
 }
 
 // Free-tier Groq model — fast, good instruction-following for conversational JSON output.
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
 const INTERVIEWER_SYSTEM_BASE =
   "You are conducting a live, spoken mock interview for a software engineering candidate, standing in " +

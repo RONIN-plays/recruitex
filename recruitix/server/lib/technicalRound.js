@@ -12,7 +12,7 @@ function getClient() {
 }
 
 // Free-tier Groq model — fast, good instruction-following for conversational JSON output.
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
 const QUESTION_GEN_SYSTEM =
   'You are a technical interviewer designing a screening exam for a general software engineering role. ' +
@@ -82,6 +82,9 @@ export async function generateTechnicalQuestions() {
     model: MODEL,
     temperature: 0.9,
     response_format: { type: 'json_object' },
+    // gpt-oss is a reasoning model: without headroom its thinking tokens eat the output budget and
+    // the 24-question JSON comes back truncated/short.
+    ...(MODEL.startsWith('openai/gpt-oss') ? { reasoning_effort: 'low', max_completion_tokens: 12000 } : {}),
     messages: [
       { role: 'system', content: QUESTION_GEN_SYSTEM },
       { role: 'user', content: 'Generate the exam now.' },

@@ -11,7 +11,7 @@ function getClient() {
   return client;
 }
 
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
 const QUESTION_GEN_SYSTEM_BASE =
   'You are an HR interviewer designing a written behavioral screening round for a software engineering ' +

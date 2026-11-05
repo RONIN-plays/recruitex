@@ -11,7 +11,7 @@ function getClient() {
   return client;
 }
 
-const MODEL = 'llama-3.3-70b-versatile';
+const MODEL = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
 
 const EXTRACTION_SYSTEM =
   "You extract structured profile information from the raw text of a candidate's resume PDF. Only pull " +
