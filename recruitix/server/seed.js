@@ -2,7 +2,7 @@
 // for the superseded Postgres plan). All four companies point at the same question set for
 // now — replace per-company content later directly in MongoDB, no schema change needed.
 import 'dotenv/config';
-import { getDb } from './db.js';
+import { pathToFileURL } from 'node:url';
 
 const COMPANIES = [
   { name: 'TCS', slug: 'tcs' },
@@ -73,9 +73,7 @@ const HR_QUESTIONS = [
   { prompt: 'How do you stay updated with industry trends and technologies?', correctAnswer: 'learning trends technology industry courses reading updated' },
 ].map((q) => ({ ...q, qtype: 'behavioral', category: 'Behavioral', options: null, points: 1 }));
 
-async function seed() {
-  const db = await getDb();
-
+export async function seedDatabase(db) {
   for (const company of COMPANIES) {
     await db.collection('companies').updateOne({ slug: company.slug }, { $setOnInsert: company }, { upsert: true });
   }
@@ -99,11 +97,16 @@ async function seed() {
 
   // eslint-disable-next-line no-console
   console.log('Seed complete.');
-  process.exit(0);
 }
 
-seed().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error(err);
-  process.exit(1);
-});
+// CLI entry: `npm run seed` seeds the real MongoDB. Skipped when imported (demo mode).
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const { getDb } = await import('./db.js');
+  seedDatabase(await getDb())
+    .then(() => process.exit(0))
+    .catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(err);
+      process.exit(1);
+    });
+}
