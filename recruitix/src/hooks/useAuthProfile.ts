@@ -37,7 +37,8 @@ export function useAuthProfile(): AuthProfileState {
       const { user } = await apiGet<{ user: Profile }>('/api/auth/me');
       setProfile(user);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) clearToken();
+      // 404 = valid JWT for a user that no longer exists (e.g. the demo in-memory DB was reset).
+      if (err instanceof ApiError && (err.status === 401 || err.status === 404)) clearToken();
       setProfile(null);
     } finally {
       setLoading(false);
