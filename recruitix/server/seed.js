@@ -23,7 +23,7 @@ const COMPANIES = [
   createdAt: new Date(),
 }));
 
-const TECHNICAL_QUESTIONS = [
+export const TECHNICAL_QUESTIONS = [
   { qtype: 'mcq', category: 'DSA', prompt: 'What is the time complexity of binary search?', options: ['O(n)', 'O(log n)', 'O(n²)', 'O(1)'], correctAnswer: 'O(log n)', points: 2 },
   { qtype: 'mcq', category: 'DSA', prompt: 'Which data structure uses LIFO principle?', options: ['Queue', 'Stack', 'Array', 'Tree'], correctAnswer: 'Stack', points: 2 },
   { qtype: 'mcq', category: 'DSA', prompt: 'What is the worst-case time complexity of quicksort?', options: ['O(n log n)', 'O(n²)', 'O(n)', 'O(log n)'], correctAnswer: 'O(n²)', points: 2 },
@@ -64,7 +64,7 @@ const PERSONAL_QUESTIONS = [
   { prompt: 'Check if two strings are anagrams.', correctAnswer: 'Sorting or character frequency counting', points: 8 },
 ].map((q) => ({ ...q, qtype: 'coding', category: 'DSA', options: null }));
 
-const HR_QUESTIONS = [
+export const HR_QUESTIONS = [
   { prompt: "Tell me about yourself and why you're interested in this position.", correctAnswer: 'background experience skills interest role motivation career goals' },
   { prompt: 'Describe a challenging situation you faced and how you overcame it.', correctAnswer: 'challenge problem obstacle solution action result overcame learned' },
   { prompt: 'Where do you see yourself in five years?', correctAnswer: 'career growth goals development future plan aspiration' },

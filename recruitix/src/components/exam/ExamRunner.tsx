@@ -88,6 +88,8 @@ const ExamRunner = ({ sessionId, screenStream, micStream, onExamComplete }: Exam
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [durations, setDurations] = useState<CompanyDurations | null>(null);
   const [questions, setQuestions] = useState<QuestionBankRow[]>([]);
+  const [questionsError, setQuestionsError] = useState('');
+  const [questionsReload, setQuestionsReload] = useState(0);
   const [loading, setLoading] = useState(true);
   const [ended, setEnded] = useState<'submitted' | 'auto_submitted' | null>(null);
   const [liveViolations, setLiveViolations] = useState<DisplayedViolation[]>([]);
@@ -396,12 +398,12 @@ const ExamRunner = ({ sessionId, screenStream, micStream, onExamComplete }: Exam
   // candidate's resume when one is on file) rather than pulled from a static seeded bank.
   useEffect(() => {
     if (!session?.companyId || !session.currentRound || session.currentRound === 'personal') return;
-    if (session.currentRound === 'technical') {
-      startTechnicalRound(sessionId).then(setQuestions);
-      return;
-    }
-    startHrRound(sessionId).then(setQuestions);
-  }, [sessionId, session?.companyId, session?.currentRound]);
+    setQuestionsError('');
+    const load = session.currentRound === 'technical' ? startTechnicalRound : startHrRound;
+    load(sessionId)
+      .then(setQuestions)
+      .catch((err) => setQuestionsError(err instanceof Error ? err.message : 'Could not load the questions.'));
+  }, [sessionId, session?.companyId, session?.currentRound, questionsReload]);
 
   const handleRoundSubmit = async (round: RoundName, result: { score: number; pct: number; answers: Record<string, string> }) => {
     if (round === 'technical') {
@@ -536,6 +538,20 @@ const ExamRunner = ({ sessionId, screenStream, micStream, onExamComplete }: Exam
           micStream={micStream}
           onSubmit={(result) => handleRoundSubmit(session.currentRound as RoundName, result)}
         />
+      ) : questionsError ? (
+        <div className="min-h-screen bg-white flex items-center justify-center p-4">
+          <div className="max-w-md text-center space-y-4">
+            <AlertTriangle className="w-10 h-10 text-red-500 mx-auto" />
+            <p className="text-gray-900 font-semibold">We couldn't load your questions.</p>
+            <p className="text-gray-500 text-sm">{questionsError}</p>
+            <button
+              onClick={() => setQuestionsReload((n) => n + 1)}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-2.5 rounded-xl transition-colors"
+            >
+              Try again
+            </button>
+          </div>
+        </div>
       ) : (
         <RoundView
           title={`${durations.name} — ${EXAM_TYPE_LABELS[session.currentRound]}`}

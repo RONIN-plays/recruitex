@@ -7,6 +7,7 @@ import { asyncHandler } from '../lib/asyncHandler.js';
 import { generateInterviewerTurn, generateInterviewEvaluation } from '../lib/interviewer.js';
 import { generateTechnicalQuestions, gradeCodingAnswer } from '../lib/technicalRound.js';
 import { generateHrQuestions, gradeHrAnswer } from '../lib/hrRound.js';
+import { fallbackTechnicalQuestions, fallbackHrQuestions, fallbackGrade } from '../lib/fallbackRounds.js';
 import { transcribeAudio } from '../lib/transcription.js';
 import { severityForType } from '../lib/violations.js';
 
@@ -173,7 +174,10 @@ router.post('/sessions/:id/technical/start', requireAuth, loadOwnedSession, asyn
   let docs = await req.db.collection('questionBank').find({ sessionId: req.session._id, round: 'technical' }).toArray();
 
   if (docs.length === 0) {
-    const generated = await generateTechnicalQuestions();
+    const generated = await generateTechnicalQuestions().catch((err) => {
+      console.error('Technical question generation failed, using built-in questions:', err?.message || err);
+      return fallbackTechnicalQuestions();
+    });
     const now = new Date();
     const toInsert = generated.map((q) => ({
       ...q,
@@ -229,7 +233,8 @@ router.post('/sessions/:id/technical/submit', requireAuth, loadOwnedSession, asy
         const { scoreFraction } = await gradeCodingAnswer(q, answer);
         score = scoreFraction * q.points;
       } catch (err) {
-        console.error('Technical answer grading failed:', err);
+        console.error('Technical answer grading failed, using keyword scoring:', err?.message || err);
+        score = fallbackGrade(q, answer).scoreFraction * q.points;
       }
     }
     earned += score;
@@ -276,7 +281,10 @@ router.post('/sessions/:id/hr/start', requireAuth, loadOwnedSession, asyncHandle
 
   if (docs.length === 0) {
     const resumeText = await getResumeText(req.db, req.session.userId);
-    const generated = await generateHrQuestions(resumeText);
+    const generated = await generateHrQuestions(resumeText).catch((err) => {
+      console.error('HR question generation failed, using built-in questions:', err?.message || err);
+      return fallbackHrQuestions();
+    });
     const now = new Date();
     const toInsert = generated.map((q) => ({
       ...q,
@@ -330,7 +338,8 @@ router.post('/sessions/:id/hr/submit', requireAuth, loadOwnedSession, asyncHandl
         const { scoreFraction } = await gradeHrAnswer(q, answer);
         score = scoreFraction * q.points;
       } catch (err) {
-        console.error('HR answer grading failed:', err);
+        console.error('HR answer grading failed, using keyword scoring:', err?.message || err);
+        score = fallbackGrade(q, answer).scoreFraction * q.points;
       }
     }
     earned += score;
