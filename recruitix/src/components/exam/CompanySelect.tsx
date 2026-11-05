@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Building2, ArrowRight, Sparkles, Clock, Target, Search, Code, Video, MessageSquare, SearchX } from 'lucide-react';
+import { Building2, ArrowRight, Sparkles, Clock, Target, Search, Code, Video, MessageSquare, SearchX, UserCircle } from 'lucide-react';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { apiGet } from '@/lib/api';
 
@@ -19,6 +19,7 @@ export interface Company {
 interface CompanySelectProps {
   onCompanySelected: (company: Company) => void;
   onBack: () => void;
+  onOpenProfile: () => void;
 }
 
 const PHASES = [
@@ -28,7 +29,7 @@ const PHASES = [
 ] as const;
 
 /** Lists active companies; picking one moves on to choosing which exam type to take. */
-const CompanySelect = ({ onCompanySelected, onBack }: CompanySelectProps) => {
+const CompanySelect = ({ onCompanySelected, onBack, onOpenProfile }: CompanySelectProps) => {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -59,7 +60,18 @@ const CompanySelect = ({ onCompanySelected, onBack }: CompanySelectProps) => {
               <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">AI-Powered</div>
             </div>
           </div>
-          <ThemeToggle />
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onOpenProfile}
+              className="text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl"
+            >
+              <UserCircle className="w-4 h-4 mr-1.5" />
+              Profile
+            </Button>
+            <ThemeToggle />
+          </div>
         </div>
       </header>
 

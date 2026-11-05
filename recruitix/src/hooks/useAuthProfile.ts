@@ -9,6 +9,7 @@ export interface Profile {
   role: 'candidate' | 'recruiter';
   faceEnrolled: boolean;
   enrollmentStatus: 'pending' | 'in_progress' | 'completed';
+  hasResume: boolean;
 }
 
 interface AuthProfileState {

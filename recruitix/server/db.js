@@ -1,6 +1,12 @@
+import dns from 'node:dns';
 import { MongoClient, GridFSBucket } from 'mongodb';
 import bcrypt from 'bcryptjs';
 import { MemoryDb } from './memoryDb.js';
+
+// Some local/router DNS resolvers refuse SRV queries (needed for the mongodb+srv:// scheme)
+// even though they resolve plain A/AAAA records fine, surfacing as "querySrv ECONNREFUSED".
+// Falling back to public resolvers keeps local dev working without changing the connection string.
+dns.setServers([...dns.getServers(), '8.8.8.8', '1.1.1.1']);
 
 const DB_NAME = 'recruitix';
 
@@ -79,5 +85,10 @@ export async function getDb() {
 
 export async function getSnapshotBucket() {
   const db = await getDb();
-  return db instanceof MemoryDb ? db.snapshotBucket() : new GridFSBucket(db, { bucketName: 'snapshots' });
+  return db instanceof MemoryDb ? db.bucket() : new GridFSBucket(db, { bucketName: 'snapshots' });
+}
+
+export async function getResumeBucket() {
+  const db = await getDb();
+  return db instanceof MemoryDb ? db.bucket() : new GridFSBucket(db, { bucketName: 'resumes' });
 }

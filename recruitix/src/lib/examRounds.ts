@@ -14,8 +14,8 @@ export const EXAM_TYPE_LABELS: Record<RoundName, string> = {
 
 export const EXAM_TYPE_DESCRIPTIONS: Record<RoundName, string> = {
   technical: 'MCQs and coding questions covering DSA, aptitude, and quantitative reasoning.',
-  personal: 'Coding problems under continuous AI-powered proctoring and behavior monitoring.',
-  hr: 'Behavioral questions evaluating communication and situational judgment.',
+  personal: 'Coding problems under continuous AI-powered proctoring and behavior monitoring. Questions are grounded in your resume when one is on file.',
+  hr: 'Behavioral questions evaluating communication and situational judgment. Grounded in your resume when one is on file.',
 };
 
 export interface QuestionBankRow {
@@ -47,7 +47,22 @@ export async function submitTechnicalRound(sessionId: string, answers: Record<st
   return apiPost<{ score: number; pct: number }>(`/api/exam/sessions/${sessionId}/technical/submit`, { answers });
 }
 
-/** MCQ: full points if exact match. Coding/behavioral: semantic-similarity partial credit, weighted by points. */
+/** HR Simulation: LLM-generated behavioral questions, grounded in the candidate's resume when one is on
+ *  file, unique per session. correctAnswer always comes back null, same as the technical round — grading
+ *  (an LLM judging each answer against its rubric) happens server-side in submitHrRound. */
+export async function startHrRound(sessionId: string): Promise<QuestionBankRow[]> {
+  const { questions } = await apiPost<{ questions: QuestionBankRow[] }>(`/api/exam/sessions/${sessionId}/hr/start`, {});
+  return questions;
+}
+
+export async function submitHrRound(sessionId: string, answers: Record<string, string>): Promise<{ score: number; pct: number }> {
+  return apiPost<{ score: number; pct: number }>(`/api/exam/sessions/${sessionId}/hr/submit`, { answers });
+}
+
+/** Client-side estimate RoundView computes on submit before handing off to the server — not authoritative.
+ *  correctAnswer is never sent to the client for technical/hr questions, so this always scores 0 for
+ *  coding/behavioral questions in practice; real grading happens server-side in submitTechnicalRound /
+ *  submitHrRound, which is what actually determines the candidate's score. */
 export function scoreAnswer(question: QuestionBankRow, answer: string): number {
   if (!answer) return 0;
   if (question.qtype === 'mcq') {
@@ -55,21 +70,4 @@ export function scoreAnswer(question: QuestionBankRow, answer: string): number {
   }
   const similarity = calculateSemanticSimilarity(answer, question.correctAnswer ?? '');
   return similarity * question.points;
-}
-
-export interface PersistedResponse {
-  questionId: string;
-  round: RoundName;
-  answer: string;
-  score: number;
-}
-
-export async function submitRoundResponses(sessionId: string, responses: PersistedResponse[]): Promise<void> {
-  if (responses.length === 0) return;
-  await apiPost(`/api/exam/sessions/${sessionId}/responses`, { responses });
-}
-
-/** Persists the round's score/pct, advances current round, and finalizes the session after HR. */
-export async function recordRoundScore(sessionId: string, round: RoundName, score: number, pct: number): Promise<void> {
-  await apiPost(`/api/exam/sessions/${sessionId}/round-score`, { round, score, pct });
 }

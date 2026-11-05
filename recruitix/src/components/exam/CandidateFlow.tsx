@@ -5,19 +5,24 @@ import { UserCheck } from 'lucide-react';
 import CompanySelect, { type Company } from './CompanySelect';
 import ExamTypeSelect from './ExamTypeSelect';
 import ExamFaceGate from './ExamFaceGate';
-import DeviceSetupGate from './DeviceSetupGate';
+import AssignmentBriefing from './AssignmentBriefing';
 import ExamRunner from './ExamRunner';
+import ProfilePage from './ProfilePage';
+import type { RoundName } from '@/lib/examRounds';
+import { useAuthProfile } from '@/hooks/useAuthProfile';
 
 interface CandidateFlowProps {
   onBack: () => void;
 }
 
-type Step = 'select_company' | 'select_exam_type' | 'face_gate' | 'device_setup' | 'manual_review' | 'exam';
+type Step = 'select_company' | 'select_exam_type' | 'face_gate' | 'assignment_briefing' | 'manual_review' | 'exam' | 'profile';
 
-/** Orchestrates company selection -> exam type selection -> face+liveness gate -> proctored exam. */
+/** Orchestrates company selection -> exam type selection -> face+liveness gate -> assignment briefing -> proctored exam. */
 const CandidateFlow = ({ onBack }: CandidateFlowProps) => {
+  const { profile, refreshProfile } = useAuthProfile();
   const [step, setStep] = useState<Step>('select_company');
   const [company, setCompany] = useState<Company | null>(null);
+  const [examType, setExamType] = useState<RoundName | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [micStream, setMicStream] = useState<MediaStream | null>(null);
@@ -30,8 +35,13 @@ const CandidateFlow = ({ onBack }: CandidateFlowProps) => {
           setCompany(c);
           setStep('select_exam_type');
         }}
+        onOpenProfile={() => setStep('profile')}
       />
     );
+  }
+
+  if (step === 'profile') {
+    return <ProfilePage onBack={() => setStep('select_company')} />;
   }
 
   if (step === 'select_exam_type' && company) {
@@ -39,8 +49,11 @@ const CandidateFlow = ({ onBack }: CandidateFlowProps) => {
       <ExamTypeSelect
         company={company}
         onBack={() => setStep('select_company')}
-        onSessionReady={(id) => {
+        hasResume={profile?.hasResume ?? false}
+        onResumeUploaded={refreshProfile}
+        onSessionReady={(id, round) => {
           setSessionId(id);
+          setExamType(round);
           setStep('face_gate');
         }}
       />
@@ -51,16 +64,18 @@ const CandidateFlow = ({ onBack }: CandidateFlowProps) => {
     return (
       <ExamFaceGate
         sessionId={sessionId}
-        onUnlocked={() => setStep('device_setup')}
+        onUnlocked={() => setStep('assignment_briefing')}
         onManualReview={() => setStep('manual_review')}
         onCancel={() => setStep('select_company')}
       />
     );
   }
 
-  if (step === 'device_setup') {
+  if (step === 'assignment_briefing' && company && examType) {
     return (
-      <DeviceSetupGate
+      <AssignmentBriefing
+        company={company}
+        round={examType}
         onReady={({ screenStream, micStream }) => {
           setScreenStream(screenStream);
           setMicStream(micStream);

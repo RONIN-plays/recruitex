@@ -9,20 +9,17 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import RecruiterPortal from '@/components/RecruiterPortal';
 import AuthGate from '@/components/auth/AuthGate';
 import EnrollFace from '@/components/auth/EnrollFace';
+import ResumeUpload from '@/components/auth/ResumeUpload';
 import CandidateFlow from '@/components/exam/CandidateFlow';
 import { HeroScrollDemo } from '@/components/HeroScrollDemo';
 import { TimelineDemo } from '@/components/TimelineDemo';
 import { TestimonialsSection } from '@/components/TestimonialsSection';
 import { Footer } from '@/components/ui/modem-animated-footer';
 import { Twitter, Linkedin, Github, Mail, Brain } from 'lucide-react';
-import { signInWithEmailAndPassword } from 'firebase/auth';
-import { auth } from '@/lib/firebase';
-import { trackUserLogin } from '@/utils/userActivityTracker';
 import { useAuthProfile } from '@/hooks/useAuthProfile';
-import { clearToken, getToken } from '@/lib/api';
+import { apiPost, ApiError, clearToken, getToken, setToken } from '@/lib/api';
 
 const Index = () => {
-  // Recruiter/admin login is still Firebase-backed pending a later migration phase.
   const [userType, setUserType] = useState<'recruiter' | null>(null);
   const [showAuth, setShowAuth] = useState(false);
   const [showAdminLogin, setShowAdminLogin] = useState(false);
@@ -32,6 +29,9 @@ const Index = () => {
   // Only true once the candidate has explicitly clicked "Start Assessment" (or just
   // signed in) — keeps a stale token in localStorage from skipping the landing page.
   const [candidateSessionActive, setCandidateSessionActive] = useState(false);
+  // Resume upload is skippable (unlike face enrollment) — once skipped, don't nag again
+  // for the rest of this browser session; they can still add one later from Company Select.
+  const [resumeSkipped, setResumeSkipped] = useState(false);
 
   // Candidate identity/session lives in a JWT (localStorage) + the Express API's /auth/me.
   const { profile: candidateProfile, loading: authLoading, refreshProfile } = useAuthProfile();
@@ -60,23 +60,20 @@ const Index = () => {
     setIsLoading(true);
     setLoginError('');
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, adminCredentials.id, adminCredentials.password);
-      const user = userCredential.user;
+      const { token, user } = await apiPost<{ token: string; user: { role: string } }>('/api/auth/login', {
+        email: adminCredentials.id,
+        password: adminCredentials.password,
+      });
+      if (user.role !== 'recruiter') {
+        setLoginError('This account does not have recruiter access.');
+        return;
+      }
+      setToken(token);
       setUserType('recruiter');
       setShowAdminLogin(false);
       setAdminCredentials({ id: '', password: '' });
-      
-      // Track admin login
-      trackUserLogin(user.uid, user.email || '', user.displayName || 'Admin', 'recruiter');
-    } catch (error: any) {
-      const errorMessage = error.code === 'auth/invalid-email' 
-        ? 'Invalid email format'
-        : error.code === 'auth/user-not-found'
-        ? 'User not found'
-        : error.code === 'auth/wrong-password'
-        ? 'Incorrect password'
-        : 'Invalid credentials. Please try again.';
-      setLoginError(errorMessage);
+    } catch (error) {
+      setLoginError(error instanceof ApiError ? error.message : 'Invalid credentials. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -87,6 +84,7 @@ const Index = () => {
   };
 
   const handleAdminLogout = () => {
+    clearToken();
     setUserType(null);
   };
 
@@ -103,6 +101,9 @@ const Index = () => {
     }
     if (candidateProfile && !candidateProfile.faceEnrolled) {
       return <EnrollFace onEnrolled={refreshProfile} />;
+    }
+    if (candidateProfile && !candidateProfile.hasResume && !resumeSkipped) {
+      return <ResumeUpload onDone={refreshProfile} onSkip={() => setResumeSkipped(true)} />;
     }
     if (candidateProfile) {
       return <CandidateFlow onBack={handleCandidateLogout} />;
@@ -159,14 +160,14 @@ const Index = () => {
                   <div className="space-y-4">
                     <div className="relative">
                       <label htmlFor="admin-id" className="block text-sm font-medium text-gray-300 mb-2">
-                        Admin ID
+                        Admin Email
                       </label>
                       <input
                         id="admin-id"
-                        type="text"
+                        type="email"
                         value={adminCredentials.id}
                         onChange={(e) => setAdminCredentials(prev => ({ ...prev, id: e.target.value }))}
-                        placeholder="Enter admin ID"
+                        placeholder="Enter admin email"
                         className="w-full p-4 backdrop-blur-sm bg-white/10 border border-white/20 rounded-xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:border-transparent transition-all duration-300"
                       />
                     </div>
@@ -335,7 +336,7 @@ const Index = () => {
                 </Button>
                 
                 <p className="text-xs text-gray-500 dark:text-gray-400 text-center bg-gray-50 dark:bg-gray-800 rounded-lg py-2 px-3 mt-4">
-                  Admin credentials: admin / admin@1234
+                  Admin credentials: admin@recruitix.local / admin@1234
                 </p>
               </CardContent>
             </Card>

@@ -126,8 +126,8 @@ export class MemoryDb {
     return this.collections.get(name);
   }
 
-  // Stand-in for GridFSBucket: just enough for the violation-snapshot upload path.
-  snapshotBucket() {
+  // Stand-in for GridFSBucket: just enough for the snapshot / resume upload paths.
+  bucket() {
     const files = this.files;
     return {
       openUploadStream() {
@@ -139,6 +139,9 @@ export class MemoryDb {
             cb?.();
           },
         };
+      },
+      async delete(id) {
+        files.delete(id.toString());
       },
     };
   }
