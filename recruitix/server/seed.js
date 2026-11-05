@@ -4,6 +4,7 @@
 import 'dotenv/config';
 import { pathToFileURL } from 'node:url';
 import bcrypt from 'bcryptjs';
+import { demoCompanyId } from './memoryDb.js';
 
 const RECRUITER_EMAIL = 'admin@recruitix.local';
 const RECRUITER_PASSWORD = 'admin@1234';
@@ -77,9 +78,10 @@ export const HR_QUESTIONS = [
   { prompt: 'How do you stay updated with industry trends and technologies?', correctAnswer: 'learning trends technology industry courses reading updated' },
 ].map((q) => ({ ...q, qtype: 'behavioral', category: 'Behavioral', options: null, points: 1 }));
 
-export async function seedDatabase(db) {
+export async function seedDatabase(db, { demoIds = false } = {}) {
   for (const company of COMPANIES) {
-    await db.collection('companies').updateOne({ slug: company.slug }, { $setOnInsert: company }, { upsert: true });
+    const doc = demoIds ? { ...company, _id: demoCompanyId(company.slug) } : company;
+    await db.collection('companies').updateOne({ slug: company.slug }, { $setOnInsert: doc }, { upsert: true });
   }
 
   const existingRecruiter = await db.collection('users').findOne({ email: RECRUITER_EMAIL });

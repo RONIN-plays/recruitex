@@ -1,6 +1,7 @@
 import express from 'express';
 import { ObjectId } from 'mongodb';
 import { getDb, getSnapshotBucket } from '../db.js';
+import { MemoryDb, newDemoSessionId, parseDemoSessionId } from '../memoryDb.js';
 import { requireAuth } from '../middleware/auth.js';
 import { isValidEmbedding, euclideanDistance, THRESHOLD } from '../lib/faceMatch.js';
 import { asyncHandler } from '../lib/asyncHandler.js';
@@ -43,7 +44,37 @@ const loadOwnedSession = asyncHandler(async (req, res, next) => {
     return res.status(400).json({ error: 'invalid_session' });
   }
   const db = await getDb();
-  const session = await db.collection('examSessions').findOne({ _id: sessionId });
+  let session = await db.collection('examSessions').findOne({ _id: sessionId });
+  if (!session && db instanceof MemoryDb) {
+    // Demo mode: the in-memory DB was reset since this session was created. Rebuild it from the
+    // company + round encoded in its id (already past the face gate, so the candidate resumes).
+    const info = parseDemoSessionId(sessionId);
+    if (info) {
+      const now = new Date();
+      session = {
+        _id: sessionId,
+        userId: new ObjectId(req.userId),
+        companyId: info.companyId,
+        round: info.round,
+        status: 'in_progress',
+        currentRound: info.round,
+        faceGateAttempts: 0,
+        faceGatePassedAt: now,
+        startedAt: now,
+        endedAt: null,
+        integrityScore: 100,
+        technicalScore: null,
+        technicalPct: null,
+        personalScore: null,
+        personalPct: null,
+        hrScore: null,
+        hrPct: null,
+        overallPct: null,
+        createdAt: now,
+      };
+      await db.collection('examSessions').insertOne(session);
+    }
+  }
   if (!session) return res.status(404).json({ error: 'invalid_session' });
   if (session.userId.toString() !== req.userId && req.role !== 'recruiter') {
     return res.status(403).json({ error: 'forbidden' });
@@ -88,6 +119,7 @@ router.post('/sessions', requireAuth, asyncHandler(async (req, res) => {
 
   const now = new Date();
   const { insertedId } = await db.collection('examSessions').insertOne({
+    ...(db instanceof MemoryDb ? { _id: newDemoSessionId(companyObjectId, round) } : {}),
     userId,
     companyId: companyObjectId,
     round,

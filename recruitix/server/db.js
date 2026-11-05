@@ -1,7 +1,7 @@
 import dns from 'node:dns';
 import { MongoClient, GridFSBucket } from 'mongodb';
 import bcrypt from 'bcryptjs';
-import { MemoryDb } from './memoryDb.js';
+import { MemoryDb, DEMO_USER_ID } from './memoryDb.js';
 
 // Some local/router DNS resolvers refuse SRV queries (needed for the mongodb+srv:// scheme)
 // even though they resolve plain A/AAAA records fine, surfacing as "querySrv ECONNREFUSED".
@@ -25,9 +25,10 @@ function getMemoryDb() {
     memoryDbPromise = (async () => {
       const db = new MemoryDb();
       const { seedDatabase } = await import('./seed.js');
-      await seedDatabase(db);
+      await seedDatabase(db, { demoIds: true });
       const now = new Date();
       await db.collection('users').insertOne({
+        _id: DEMO_USER_ID,
         email: DEMO_USER.email,
         passwordHash: await bcrypt.hash(DEMO_USER.password, 10),
         displayName: DEMO_USER.name,

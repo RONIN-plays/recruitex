@@ -146,3 +146,29 @@ export class MemoryDb {
     };
   }
 }
+
+// Demo-mode ids. The in-memory DB is wiped whenever the (serverless) instance restarts or a new
+// one serves a request, which would orphan a candidate's JWT, company links and in-flight exam
+// session. Making the demo user and companies deterministic — and encoding company + round into
+// the session id — lets all of them be recognised/rebuilt after a reset instead of "invalid_session".
+const hex2 = (n) => n.toString(16).padStart(2, '0');
+const DEMO_ROUNDS = ['technical', 'personal', 'hr'];
+const DEMO_SLUGS = ['tcs', 'wipro', 'infosys', 'general'];
+
+export const DEMO_USER_ID = new ObjectId(`d0${'0'.repeat(22)}`);
+export const demoCompanyId = (slug) => new ObjectId(`c0${hex2(Math.max(0, DEMO_SLUGS.indexOf(slug)))}${'0'.repeat(20)}`);
+
+export function newDemoSessionId(companyId, round) {
+  const companyIdx = companyId.toString().slice(2, 4);
+  const roundIdx = hex2(Math.max(0, DEMO_ROUNDS.indexOf(round)));
+  const random = Array.from({ length: 18 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+  return new ObjectId(`d5${companyIdx}${roundIdx}${random}`);
+}
+
+export function parseDemoSessionId(id) {
+  const h = id.toString();
+  if (!h.startsWith('d5')) return null;
+  const round = DEMO_ROUNDS[parseInt(h.slice(4, 6), 16)];
+  if (!round) return null;
+  return { companyId: new ObjectId(`c0${h.slice(2, 4)}${'0'.repeat(20)}`), round };
+}
